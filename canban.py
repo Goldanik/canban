@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QMimeData, QRect, QPoint
 from PyQt5.QtGui import QDrag, QPixmap
+from PyQt5.QtCore import QTimer
 
 
 class DraggableLineEdit(QLineEdit):
@@ -23,28 +24,65 @@ class DraggableLineEdit(QLineEdit):
         self.parent_area = parent
         self.previous_parent_area = None
         self.id = uuid.uuid4()  # Генерируем уникальный ID
+        self.setReadOnly(True)  # Отключаем прямое редактирование
+        self.drag_timer = QTimer(self)  # Таймер для перетаскивания
+        self.drag_timer.setInterval(1000)  # 1 секунда
+        self.drag_timer.timeout.connect(self.start_drag)  # Обработчик таймера
+        self.is_dragging = False  # Флаг для отслеживания перетаскивания
+        self.click_count = 0  # Счетчик кликов для обработки двойного клика
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            pixmap = self.grab()
-            drag = QDrag(self)
-            mime_data = QMimeData()
-            mime_data.setText(f"{self.id};{self.text()}") # Сохраняем ID и текст
-            drag.setMimeData(mime_data)
-            drag.setPixmap(pixmap)
-            drag.setHotSpot(event.pos())
-            self.previous_parent_area = self.parent_area
-            self.hide()
-            drag_result = drag.exec_(Qt.MoveAction)
-            if drag_result == Qt.MoveAction:
-                self.parent_area = None
-            else:
-                self.show()
-                self.parent_area = self.previous_parent_area
+            self.drag_timer.start()  # Запускаем таймер при зажатии кнопки мыши
+            self.start_pos = event.pos()  # Сохраняем начальную позицию клика
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.drag_timer.stop()  # Останавливаем таймер при отпускании кнопки
+            if not self.is_dragging:  # Если перетаскивание не началось
+                if (event.pos() - self.start_pos).manhattanLength() < 5:  # Проверяем, был ли это клик (не движение)
+                    self.click_count += 1  # Увеличиваем счетчик кликов
+                    if self.click_count == 1:
+                        # Запускаем таймер для проверки двойного клика
+                        QTimer.singleShot(200, self.check_double_click)
+
+    def check_double_click(self):
+        if self.click_count == 1:
+            # Это был одиночный клик, ничего не делаем
+            self.click_count = 0  # Сбрасываем счетчик
+        elif self.click_count >= 2:
+            # Это был двойной клик
+            self.mouseDoubleClickEvent(None)
+            self.click_count = 0  # Сбрасываем счетчик
+
+    def mouseDoubleClickEvent(self, event):
+        # Открываем QInputDialog для редактирования текста
+        new_text, ok = QInputDialog.getText(self, "Редактирование заметки", "Введите новый текст:", text=self.text())
+        if ok and new_text:
+            self.setText(new_text)
+
+    def start_drag(self):
+        self.drag_timer.stop()  # Останавливаем таймер
+        self.is_dragging = True  # Начинаем перетаскивание
+        pixmap = self.grab()
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        mime_data.setText(f"{self.id};{self.text()}")  # Сохраняем ID и текст
+        drag.setMimeData(mime_data)
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(self.start_pos)
+        self.previous_parent_area = self.parent_area
+        self.hide()
+        drag_result = drag.exec_(Qt.MoveAction)
+        if drag_result == Qt.MoveAction:
+            self.parent_area = None
+        else:
+            self.show()
+            self.parent_area = self.previous_parent_area
+        self.is_dragging = False  # Завершаем перетаскивание
 
     def setParentArea(self, new_parent):
         self.parent_area = new_parent
-
 
 class KanbanColumn(QFrame):
     def __init__(self, name, parent=None):
